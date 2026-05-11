@@ -32,6 +32,8 @@
 import argparse
 import sys
 import pandas as pd
+from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+from openpyxl.utils import get_column_letter
 
 
 def find_column(df: pd.DataFrame, candidates: list[str]) -> str | None:
@@ -103,6 +105,48 @@ def merge_duplicates(
 
     df_merged = df_merged.reset_index(drop=True)
     return df_merged
+
+
+def _format_sheet(ws, df: pd.DataFrame) -> None:
+    """Применува форматирање на Excel sheet: боени заглавија, рамки, авто-ширина."""
+    header_fill   = PatternFill("solid", fgColor="1F4E79")   # темно сино
+    alt_row_fill  = PatternFill("solid", fgColor="D6E4F0")   # светло сино
+    header_font   = Font(bold=True, color="FFFFFF", size=11)
+    cell_font     = Font(size=10)
+    center        = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    left          = Alignment(horizontal="left",   vertical="center", wrap_text=True)
+    thin          = Side(style="thin", color="B0C4DE")
+    border        = Border(left=thin, right=thin, top=thin, bottom=thin)
+
+    # Заглавија
+    for cell in ws[1]:
+        cell.fill      = header_fill
+        cell.font      = header_font
+        cell.alignment = center
+        cell.border    = border
+
+    # Замрзни прв ред
+    ws.freeze_panes = "A2"
+
+    # Редови со податоци
+    for row_idx, row in enumerate(ws.iter_rows(min_row=2, max_row=ws.max_row), start=2):
+        fill = alt_row_fill if row_idx % 2 == 0 else None
+        for cell in row:
+            cell.font      = cell_font
+            cell.border    = border
+            cell.alignment = center if isinstance(cell.value, (int, float)) else left
+            if fill:
+                cell.fill = fill
+
+    # Авто-ширина на колоните
+    for col_idx, col_cells in enumerate(ws.columns, start=1):
+        max_len = max(
+            (len(str(c.value)) if c.value is not None else 0) for c in col_cells
+        )
+        ws.column_dimensions[get_column_letter(col_idx)].width = min(max_len + 4, 40)
+
+    # Висина на заглавието
+    ws.row_dimensions[1].height = 22
 
 
 def main() -> None:
@@ -185,6 +229,7 @@ def main() -> None:
     try:
         with pd.ExcelWriter(output_path, engine="openpyxl") as writer:
             df_clean.to_excel(writer, index=False, sheet_name="Резултат")
+            _format_sheet(writer.sheets["Резултат"], df_clean)
         print(f"\nФајлот е зачуван: {output_path}")
     except Exception as exc:
         sys.exit(f"Грешка при запишување: {exc}")
