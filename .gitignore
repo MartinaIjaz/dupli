@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# Temporary test artifacts (not the committed samples)
+primer_vlezen.xlsx
+primer_izlezen.xlsx
+primer_ime_prezime.xlsx
+rezultat_ime_prezime.xlsx
+rezultat_merged.xlsx
+deduplicated_*.xlsx
