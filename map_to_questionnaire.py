@@ -5,8 +5,7 @@
 Употреба:
     python3 map_to_questionnaire.py --input vashiot_fajl.xlsx --output questionnaire.xlsx
 
-Скриптата автоматски ги препознава колоните (Ime, Prezime, Телефон, Е-пошта итн.)
-и ги пренесува во соодветното поле на прашалникот.
+Скриптата автоматски ги препознава колоните и ги пренесува во прашалникот.
 Полиња за кои нема податоци остануваат празни — за REDI staff да ги пополни.
 """
 
@@ -14,57 +13,117 @@ import argparse
 import sys
 import pandas as pd
 from openpyxl import load_workbook
-from openpyxl.styles import (
-    Font, PatternFill, Alignment, Border, Side, GradientFill
-)
+from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
+from openpyxl.worksheet.datavalidation import DataValidation
 
 # ---------------------------------------------------------------------------
-# Структура на прашалникот — редослед и имиња на колоните
+# Точни имиња на колони од прашалникот
 # ---------------------------------------------------------------------------
 
 QUESTIONNAIRE_COLUMNS = [
-    "REDI Staff Member Name",
-    "Date of Mapping",
+    "REDI staff member name",
+    "Date of mapping (today)",
     "Name Surname",
     "Contact Email",
-    "Contact Phone Number",
+    "Contact Phone number",
     "Country",
-    "Place of Residence (Municipality / City)",
+    "Place of Residence (Municipality, City)",
     "Address",
     "Gender",
-    "Year of Birth",
-    "Level of Education",
+    "Year of your birth",
+    "What is your level of education?",
     "Do you identify as Roma?",
-    "If NO Roma – Connection to Roma Community",
-    "Business Name",
+    "If NO, what is the connection to the Roma community?",
+    "Business Name?",
     "Address of the Business",
-    "Short Description of the Business",
-    "Business Sector",
-    "Is the Business Registered?",
-    "Date of Business Registration",
-    "Number of Employees",
-    "Was Business Supported in Phase I?",
+    "Short description of the business. What is your business about?",
+    "Which business sector does the business belong too?",
+    "Is the business registered?",
+    "Date of Business Registration?",
+    "Number of Employees (formal and informal aggregate)",
+    "Was your business supported in the Phase I?",
     "Year of Initial Support",
-    "Type of Service Needed",
-    "Interested in Business Club Membership?",
-    "Previously had a Business Loan?",
-    "Informed about Measures / Help for Business",
-    "[REDI Staff] Assessment of Client Needs",
-    "[REDI Staff] Action Recommended",
+    "Which type of service do you need? (question for entrepreneurs)",
+    "Are you interested in a Business Club Membership?",
+    "Did you previously have a business loan?",
+    "Informed about measure, or anything that helps his business",
+    "[For REDI Staff] Describe your assessment of the clients needs",
+    "[For REDI Staff] Action recommended?",
 ]
+
+# ---------------------------------------------------------------------------
+# Dropdown вредности за полиња со понудени одговори
+# ---------------------------------------------------------------------------
+
+DROPDOWN_OPTIONS: dict[str, list[str]] = {
+    "Gender": ["Male", "Female", "Other"],
+    "What is your level of education?": [
+        "No formal education", "Elementary School", "High School",
+        "University Student", "Bachelor", "Master", "PhD", "Vocational Training",
+    ],
+    "Do you identify as Roma?": ["Yes", "No"],
+    "Which business sector does the business belong too?": [
+        "Agriculture and animal husbandry", "Construction", "Services (Accounting, Law)",
+        "Tourism and Hospitality", "Beauty and Health", "Transportation",
+        "Production", "Trade", "Craftsmanship", "Recycling & Upcycling",
+        "Cleaning Agency", "Other",
+    ],
+    "Is the business registered?": ["Yes", "No"],
+    "Was your business supported in the Phase I?": ["Yes", "No"],
+    "Year of Initial Support": ["2020", "2021", "2022", "2023", "2024", "2025", "2026", "2027"],
+    "Which type of service do you need? (question for entrepreneurs)": [
+        "Incubation Program", "Acceleration Program", "Growth Program",
+        "Digitalization of the business", "One-on-one Mentorship",
+        "Business Registration", "Brand Identity", "Business Plan Writing",
+        "Marketing and Promotion", "Networking",
+        "Access to Grant from National Employment Service Agency",
+        "Access to Grant from REDI", "Access to grant from IPARD",
+        "Business Loan", "Certified Training", "Consulting",
+        "Legal Support", "Accountancy Support",
+        "Assistance at Finding Additional Workers",
+        "Assistance at Starting a Business",
+        "Internship Program Development",
+        "Improved Business Practices",
+        "Assistance in Accessing Government Institutions",
+        "Assistance in Forming Cooperatives",
+        "Social Impact and Corporate Social Responsibility (ESG)",
+        "Nothing from above",
+    ],
+    "Are you interested in a Business Club Membership?": ["Yes", "No", "Maybe"],
+    "Did you previously have a business loan?": ["Yes", "No"],
+    "Informed about measure, or anything that helps his business": ["Yes", "No"],
+    "[For REDI Staff] Action recommended?": [
+        "Develop a business plan",
+        "Link to a financial institution (MFI or Bank)",
+        "Apply for REDI Grant Scheme Support",
+        "Link to the Agency of Employment to find or subsidized employment",
+        "Link to Government measures, to be self-employed",
+        "Train on Business Growth and Development",
+        "Business Formalization (Registration)",
+        "One-on-One Expert Support",
+        "Digitalization (Roma Digital Boost)",
+        "Marketing and Promotion",
+        "Networking (Business Clubs)",
+        "Linking to potential employees",
+        "Business Consultancy",
+        "Link clients to training programs (certified or other)",
+        "No Action for the moment",
+        "Other",
+    ],
+}
 
 # ---------------------------------------------------------------------------
 # Авто-детекција: мап од можни имиња на влезни колони → поле на прашалник
 # ---------------------------------------------------------------------------
 
 COLUMN_MAP: dict[str, str] = {
-    # Ime / Name
+    # Комбинирано ime + prezime
     "ime i prezime":            "Name Surname",
     "name surname":             "Name Surname",
     "full name":                "Name Surname",
     "полно ime":                "Name Surname",
-    # Презиме се спојува подоцна ако се одделни
+    # Ime / Prezime одделно — се спојуваат
     "ime":                      "__ime__",
     "prezime":                  "__prezime__",
     "first name":               "__ime__",
@@ -76,25 +135,23 @@ COLUMN_MAP: dict[str, str] = {
     "email":                    "Contact Email",
     "e-mail":                   "Contact Email",
     "e mail":                   "Contact Email",
-    "контакт email":            "Contact Email",
     # Телефон
-    "телефон":                  "Contact Phone Number",
-    "phone":                    "Contact Phone Number",
-    "phone number":             "Contact Phone Number",
-    "контакт телефон":          "Contact Phone Number",
-    "mobile":                   "Contact Phone Number",
+    "телефон":                  "Contact Phone number",
+    "phone":                    "Contact Phone number",
+    "phone number":             "Contact Phone number",
+    "mobile":                   "Contact Phone number",
     # Земја
     "земја":                    "Country",
     "country":                  "Country",
     "држава":                   "Country",
-    # Место / Општина
-    "општина":                  "Place of Residence (Municipality / City)",
-    "municipality":             "Place of Residence (Municipality / City)",
-    "место":                    "Place of Residence (Municipality / City)",
-    "град":                     "Place of Residence (Municipality / City)",
-    "city":                     "Place of Residence (Municipality / City)",
-    "place of residence":       "Place of Residence (Municipality / City)",
-    # Адреса
+    # Општина / Место
+    "општина":                  "Place of Residence (Municipality, City)",
+    "municipality":             "Place of Residence (Municipality, City)",
+    "место":                    "Place of Residence (Municipality, City)",
+    "град":                     "Place of Residence (Municipality, City)",
+    "city":                     "Place of Residence (Municipality, City)",
+    "place of residence":       "Place of Residence (Municipality, City)",
+    # Адреса (лична)
     "адреса":                   "Address",
     "address":                  "Address",
     "улица":                    "Address",
@@ -103,94 +160,88 @@ COLUMN_MAP: dict[str, str] = {
     "gender":                   "Gender",
     "sex":                      "Gender",
     # Година на раѓање
-    "година на раѓање":         "Year of Birth",
-    "year of birth":            "Year of Birth",
-    "роденден":                 "Year of Birth",
-    "birthdate":                "Year of Birth",
-    "date of birth":            "Year of Birth",
+    "година на раѓање":         "Year of your birth",
+    "year of birth":            "Year of your birth",
+    "роденден":                 "Year of your birth",
+    "birthdate":                "Year of your birth",
+    "date of birth":            "Year of your birth",
     # Образование
-    "образование":              "Level of Education",
-    "level of education":       "Level of Education",
-    "education":                "Level of Education",
+    "образование":              "What is your level of education?",
+    "level of education":       "What is your level of education?",
+    "education":                "What is your level of education?",
     # Рома
     "рома":                     "Do you identify as Roma?",
     "roma":                     "Do you identify as Roma?",
     "is roma":                  "Do you identify as Roma?",
-    # Врска со ромска заедница
-    "врска со ромска заедница": "If NO Roma – Connection to Roma Community",
-    "connection to roma":       "If NO Roma – Connection to Roma Community",
-    # Бизнис
-    "бизнис":                   "Business Name",
-    "business name":            "Business Name",
-    "назив на фирма":           "Business Name",
-    "фирма":                    "Business Name",
+    # Врска со Рома
+    "врска со ромска заедница": "If NO, what is the connection to the Roma community?",
+    "connection to roma":       "If NO, what is the connection to the Roma community?",
+    # Бизнис назив
+    "бизнис":                   "Business Name?",
+    "business name":            "Business Name?",
+    "назив на фирма":           "Business Name?",
+    "фирма":                    "Business Name?",
     # Адреса на бизнис
     "адреса на бизнис":         "Address of the Business",
     "business address":         "Address of the Business",
     "address of the business":  "Address of the Business",
-    # Опис на бизнис
-    "опис на бизнис":           "Short Description of the Business",
-    "business description":     "Short Description of the Business",
-    "description":              "Short Description of the Business",
+    # Опис
+    "опис на бизнис":           "Short description of the business. What is your business about?",
+    "business description":     "Short description of the business. What is your business about?",
+    "description":              "Short description of the business. What is your business about?",
     # Сектор
-    "сектор":                   "Business Sector",
-    "sector":                   "Business Sector",
-    "business sector":          "Business Sector",
+    "сектор":                   "Which business sector does the business belong too?",
+    "sector":                   "Which business sector does the business belong too?",
+    "business sector":          "Which business sector does the business belong too?",
     # Регистрација
-    "регистриран":              "Is the Business Registered?",
-    "registered":               "Is the Business Registered?",
-    "is registered":            "Is the Business Registered?",
+    "регистриран":              "Is the business registered?",
+    "registered":               "Is the business registered?",
     # Датум на регистрација
-    "датум на регистрација":    "Date of Business Registration",
-    "date of registration":     "Date of Business Registration",
-    "registration date":        "Date of Business Registration",
+    "датум на регистрација":    "Date of Business Registration?",
+    "date of registration":     "Date of Business Registration?",
+    "registration date":        "Date of Business Registration?",
     # Вработени
-    "вработени":                "Number of Employees",
-    "employees":                "Number of Employees",
-    "number of employees":      "Number of Employees",
-    "broj vraboteni":           "Number of Employees",
+    "вработени":                "Number of Employees (formal and informal aggregate)",
+    "employees":                "Number of Employees (formal and informal aggregate)",
+    "number of employees":      "Number of Employees (formal and informal aggregate)",
     # Фаза I
-    "фаза i":                   "Was Business Supported in Phase I?",
-    "phase i":                  "Was Business Supported in Phase I?",
-    "phase 1":                  "Was Business Supported in Phase I?",
+    "фаза i":                   "Was your business supported in the Phase I?",
+    "phase i":                  "Was your business supported in the Phase I?",
+    "phase 1":                  "Was your business supported in the Phase I?",
     # Година на поддршка
     "година на поддршка":       "Year of Initial Support",
     "year of support":          "Year of Initial Support",
     # Тип на услуга
-    "тип на услуга":            "Type of Service Needed",
-    "service needed":           "Type of Service Needed",
-    "service":                  "Type of Service Needed",
+    "тип на услуга":            "Which type of service do you need? (question for entrepreneurs)",
+    "service needed":           "Which type of service do you need? (question for entrepreneurs)",
+    "service":                  "Which type of service do you need? (question for entrepreneurs)",
     # Бизнис клуб
-    "бизнис клуб":              "Interested in Business Club Membership?",
-    "business club":            "Interested in Business Club Membership?",
+    "бизнис клуб":              "Are you interested in a Business Club Membership?",
+    "business club":            "Are you interested in a Business Club Membership?",
     # Кредит
-    "кредит":                   "Previously had a Business Loan?",
-    "loan":                     "Previously had a Business Loan?",
-    "business loan":            "Previously had a Business Loan?",
+    "кредит":                   "Did you previously have a business loan?",
+    "loan":                     "Did you previously have a business loan?",
+    "business loan":            "Did you previously have a business loan?",
     # Информиран
-    "информиран":               "Informed about Measures / Help for Business",
-    "informed":                 "Informed about Measures / Help for Business",
-    # REDI staff
-    "процена":                  "[REDI Staff] Assessment of Client Needs",
-    "assessment":               "[REDI Staff] Assessment of Client Needs",
-    "потребни акции":           "[REDI Staff] Action Recommended",
-    "action":                   "[REDI Staff] Action Recommended",
-    "action recommended":       "[REDI Staff] Action Recommended",
+    "информиран":               "Informed about measure, or anything that helps his business",
+    "informed":                 "Informed about measure, or anything that helps his business",
+    # REDI оценка
+    "процена":                  "[For REDI Staff] Describe your assessment of the clients needs",
+    "assessment":               "[For REDI Staff] Describe your assessment of the clients needs",
+    # Препорака
+    "потребни акции":           "[For REDI Staff] Action recommended?",
+    "action":                   "[For REDI Staff] Action recommended?",
+    "action recommended":       "[For REDI Staff] Action recommended?",
     # Датум на мапирање
-    "датум":                    "Date of Mapping",
-    "date":                     "Date of Mapping",
-    "date of mapping":          "Date of Mapping",
+    "датум":                    "Date of mapping (today)",
+    "date":                     "Date of mapping (today)",
+    "date of mapping":          "Date of mapping (today)",
 }
 
 
-def detect_mapping(df: pd.DataFrame) -> dict[str, str]:
-    """
-    За секоја колона во df, пронајди го соодветното поле на прашалникот.
-    Враќа речник: {col_in_df: questionnaire_field}.
-    """
+def detect_mapping(df: pd.DataFrame):
     mapping = {}
     lower_cols = {c.lower().strip(): c for c in df.columns}
-
     ime_col = prez_col = None
 
     for lower, original in lower_cols.items():
@@ -205,32 +256,30 @@ def detect_mapping(df: pd.DataFrame) -> dict[str, str]:
     return mapping, ime_col, prez_col
 
 
-def build_questionnaire(
-    df: pd.DataFrame,
-    mapping: dict[str, str],
-    ime_col: str | None,
-    prez_col: str | None,
-) -> pd.DataFrame:
-    """Гради нова табела со структурата на прашалникот."""
+def _first_non_empty(series: pd.Series):
+    for val in series:
+        if pd.notna(val) and str(val).strip() not in ("", "nan", "None"):
+            return val
+    return None
+
+
+def build_questionnaire(df, mapping, ime_col, prez_col) -> pd.DataFrame:
     rows = []
     for _, row in df.iterrows():
-        qrow: dict[str, object] = {col: None for col in QUESTIONNAIRE_COLUMNS}
+        qrow = {col: None for col in QUESTIONNAIRE_COLUMNS}
 
-        # Спои Ime + Prezime во Name Surname
         if ime_col and prez_col:
             ime  = str(row[ime_col]).strip()  if pd.notna(row[ime_col])  else ""
             prez = str(row[prez_col]).strip() if pd.notna(row[prez_col]) else ""
             full = f"{ime} {prez}".strip()
             if full:
                 qrow["Name Surname"] = full
-        elif ime_col:
-            qrow["Name Surname"] = row[ime_col] if pd.notna(row[ime_col]) else None
+        elif ime_col and pd.notna(row[ime_col]):
+            qrow["Name Surname"] = row[ime_col]
 
-        # Пренеси ги останатите колони
         for src_col, dst_col in mapping.items():
             val = row[src_col]
-            if pd.notna(val) and str(val).strip() != "":
-                # Не пребришувај ако веќе пополнето (Name Surname)
+            if pd.notna(val) and str(val).strip() not in ("", "nan", "None"):
                 if qrow[dst_col] is None:
                     qrow[dst_col] = val
 
@@ -240,37 +289,70 @@ def build_questionnaire(
 
 
 # ---------------------------------------------------------------------------
-# Excel форматирање
+# Боени групи на колони
 # ---------------------------------------------------------------------------
 
 def _col_group(col: str) -> str:
-    if col.startswith("[REDI"):
+    if col.startswith("[For REDI"):
         return "redi"
-    if col in ("REDI Staff Member Name", "Date of Mapping"):
+    if col in ("REDI staff member name", "Date of mapping (today)"):
         return "meta"
-    if col in ("Name Surname", "Contact Email", "Contact Phone Number",
-               "Country", "Place of Residence (Municipality / City)",
-               "Address", "Gender", "Year of Birth", "Level of Education",
-               "Do you identify as Roma?", "If NO Roma – Connection to Roma Community"):
+    if col in (
+        "Name Surname", "Contact Email", "Contact Phone number", "Country",
+        "Place of Residence (Municipality, City)", "Address", "Gender",
+        "Year of your birth", "What is your level of education?",
+        "Do you identify as Roma?",
+        "If NO, what is the connection to the Roma community?",
+    ):
         return "personal"
     return "business"
 
 
 GROUP_COLORS = {
-    "meta":     ("1F4E79", "D6E4F0"),   # темно сино  / светло сино
-    "personal": ("375623", "E2EFDA"),   # темно зелено / светло зелено
-    "business": ("7B3F00", "FCE4D6"),   # темно кафеа / светло праскова
-    "redi":     ("4B0082", "EDE7F6"),   # виолетова   / светло виолетова
+    "meta":     ("1F4E79", "D6E4F0"),
+    "personal": ("375623", "E2EFDA"),
+    "business": ("7B3F00", "FCE4D6"),
+    "redi":     ("4B0082", "EDE7F6"),
 }
 
 
-def format_questionnaire(ws, df: pd.DataFrame) -> None:
-    thin  = Side(style="thin", color="BFBFBF")
-    bdr   = Border(left=thin, right=thin, top=thin, bottom=thin)
-    wrap  = Alignment(horizontal="left", vertical="center", wrap_text=True)
+# ---------------------------------------------------------------------------
+# Excel форматирање + dropdown валидација
+# ---------------------------------------------------------------------------
+
+def _add_dropdowns(ws, df: pd.DataFrame, max_rows: int = 500) -> None:
+    """Додај dropdown листи за прашања со понудени одговори."""
+    for col_idx, col_name in enumerate(df.columns, start=1):
+        options = DROPDOWN_OPTIONS.get(col_name)
+        if not options:
+            continue
+
+        # За кратки листи — inline formula
+        quoted = [f'"{o}"' for o in options]
+        formula = ",".join(quoted)
+        col_letter = get_column_letter(col_idx)
+        cell_range = f"{col_letter}2:{col_letter}{max_rows}"
+
+        dv = DataValidation(
+            type="list",
+            formula1=f'"{",".join(options)}"' if len(formula) <= 255 else None,
+            allow_blank=True,
+            showErrorMessage=False,
+        )
+        # Ако е предолга листата, скрати ги опциите во формулата
+        short_options = options[:10] if len(formula) > 255 else options
+        dv.formula1 = '"' + ",".join(short_options) + '"'
+        dv.sqref = cell_range
+        ws.add_data_validation(dv)
+
+
+def format_sheet(ws, df: pd.DataFrame) -> None:
+    thin   = Side(style="thin", color="BFBFBF")
+    bdr    = Border(left=thin, right=thin, top=thin, bottom=thin)
+    wrap   = Alignment(horizontal="left",   vertical="center", wrap_text=True)
     center = Alignment(horizontal="center", vertical="center", wrap_text=True)
 
-    # --- Заглавија ---
+    # Заглавија
     for col_idx, col_name in enumerate(df.columns, start=1):
         group = _col_group(col_name)
         hdr_color, _ = GROUP_COLORS[group]
@@ -282,11 +364,10 @@ def format_questionnaire(ws, df: pd.DataFrame) -> None:
         cell.border    = bdr
 
     ws.freeze_panes = "A2"
-    ws.row_dimensions[1].height = 42
+    ws.row_dimensions[1].height = 50
 
-    # --- Редови со податоци ---
+    # Редови со податоци
     for row_idx in range(2, ws.max_row + 1):
-        group_of_row = None
         for col_idx, col_name in enumerate(df.columns, start=1):
             group = _col_group(col_name)
             _, row_color = GROUP_COLORS[group]
@@ -298,10 +379,9 @@ def format_questionnaire(ws, df: pd.DataFrame) -> None:
                 cell.fill = PatternFill("solid", fgColor=row_color)
         ws.row_dimensions[row_idx].height = 18
 
-    # --- Ширина на колони ---
+    # Ширина на колони
     for col_idx, col_name in enumerate(df.columns, start=1):
         col_letter = get_column_letter(col_idx)
-        # Заглавие + максимална вредност
         max_len = max(
             len(col_name),
             max(
@@ -310,53 +390,48 @@ def format_questionnaire(ws, df: pd.DataFrame) -> None:
                 default=0,
             ),
         )
-        ws.column_dimensions[col_letter].width = min(max_len + 3, 35)
+        ws.column_dimensions[col_letter].width = min(max_len + 3, 38)
+
+    _add_dropdowns(ws, df)
 
 
 def add_legend_sheet(wb) -> None:
-    """Додај sheet со легенда за боите."""
-    ws = wb.create_sheet("Легенда")
-    ws.column_dimensions["A"].width = 30
-    ws.column_dimensions["B"].width = 40
+    ws = wb.create_sheet("Legend")
+    ws.column_dimensions["A"].width = 32
+    ws.column_dimensions["B"].width = 45
 
     thin = Side(style="thin", color="BFBFBF")
     bdr  = Border(left=thin, right=thin, top=thin, bottom=thin)
+    center = Alignment(horizontal="center", vertical="center")
+    left   = Alignment(horizontal="left",   vertical="center")
 
-    rows = [
-        ("Боја", "Значење"),
-        ("Темно сино / светло сино", "Мета-информации (REDI Staff, Датум)"),
-        ("Темно зелено / светло зелено", "Лични податоци на клиентот"),
-        ("Темно кафеаво / светло праскова", "Податоци за бизнис"),
-        ("Виолетова / светло виолетова", "Проценка и препорака на REDI Staff"),
-    ]
-    colors = [
-        ("1F4E79", "D6E4F0"),
-        ("375623", "E2EFDA"),
-        ("7B3F00", "FCE4D6"),
-        ("4B0082", "EDE7F6"),
+    header_data = [("Color Group", "Fields")]
+    rows_data = [
+        ("1F4E79", "D6E4F0", "Dark Blue / Light Blue",    "REDI Staff Name, Date of Mapping"),
+        ("375623", "E2EFDA", "Dark Green / Light Green",  "Personal data: Name, Email, Phone, Country, Address, Gender, Education, Roma..."),
+        ("7B3F00", "FCE4D6", "Dark Brown / Light Peach",  "Business data: Business Name, Sector, Registration, Employees, Services..."),
+        ("4B0082", "EDE7F6", "Purple / Light Purple",     "[For REDI Staff] Assessment & Action Recommended"),
     ]
 
-    header = ws[1]
-    for col_idx, val in enumerate(rows[0], start=1):
-        cell = ws.cell(row=1, column=col_idx, value=val)
-        cell.font   = Font(bold=True, color="FFFFFF")
-        cell.fill   = PatternFill("solid", fgColor="333333")
-        cell.border = bdr
-        cell.alignment = Alignment(horizontal="center")
+    for col_idx, val in enumerate(header_data[0], start=1):
+        c = ws.cell(row=1, column=col_idx, value=val)
+        c.font = Font(bold=True, color="FFFFFF")
+        c.fill = PatternFill("solid", fgColor="333333")
+        c.border = bdr
+        c.alignment = center
 
-    for i, (label, desc) in enumerate(rows[1:], start=2):
-        hdr_c, row_c = colors[i - 2]
+    for i, (hc, rc, label, desc) in enumerate(rows_data, start=2):
         ca = ws.cell(row=i, column=1, value=label)
-        ca.fill   = PatternFill("solid", fgColor=hdr_c)
-        ca.font   = Font(color="FFFFFF", bold=True)
+        ca.fill = PatternFill("solid", fgColor=hc)
+        ca.font = Font(color="FFFFFF", bold=True)
         ca.border = bdr
-        ca.alignment = Alignment(horizontal="left", vertical="center")
+        ca.alignment = left
 
         cb = ws.cell(row=i, column=2, value=desc)
-        cb.fill   = PatternFill("solid", fgColor=row_c)
+        cb.fill = PatternFill("solid", fgColor=rc)
         cb.border = bdr
-        cb.alignment = Alignment(horizontal="left", vertical="center")
-        ws.row_dimensions[i].height = 20
+        cb.alignment = left
+        ws.row_dimensions[i].height = 22
 
 
 # ---------------------------------------------------------------------------
@@ -366,26 +441,25 @@ def add_legend_sheet(wb) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--input",  required=True, help="Влезен Excel фајл со податоци")
-    parser.add_argument("--output", default="questionnaire_output.xlsx",
-                        help="Излезен Excel фајл (default: questionnaire_output.xlsx)")
-    parser.add_argument("--sheet",  default=0, help="Sheet (број или ime, default: 0)")
+    parser.add_argument("--input",  required=True)
+    parser.add_argument("--output", default="questionnaire_output.xlsx")
+    parser.add_argument("--sheet",  default=0)
     args = parser.parse_args()
 
     try:
         sheet = int(args.sheet) if str(args.sheet).isdigit() else args.sheet
         df = pd.read_excel(args.input, sheet_name=sheet)
     except FileNotFoundError:
-        sys.exit(f"Грешка: фајлот '{args.input}' не е пронајден.")
+        sys.exit(f"Error: file '{args.input}' not found.")
     except Exception as exc:
-        sys.exit(f"Грешка при читање: {exc}")
+        sys.exit(f"Error reading file: {exc}")
 
-    print(f"Вчитани {len(df)} редови.")
-    print(f"Влезни колони: {list(df.columns)}")
+    print(f"Loaded {len(df)} rows.")
+    print(f"Input columns: {list(df.columns)}")
 
     mapping, ime_col, prez_col = detect_mapping(df)
 
-    print(f"\nПронајдени пресликувања:")
+    print("\nColumn mappings detected:")
     if ime_col and prez_col:
         print(f"  '{ime_col}' + '{prez_col}'  →  Name Surname")
     elif ime_col:
@@ -397,25 +471,24 @@ def main() -> None:
 
     filled = df_q.notna().sum().sum()
     total  = len(df_q) * len(QUESTIONNAIRE_COLUMNS)
-    print(f"\nПополнети ќелии: {filled} / {total} "
-          f"({100 * filled // total}%)")
+    pct    = 100 * filled // total if total else 0
+    print(f"\nFilled cells: {filled} / {total} ({pct}%)")
     empty_cols = [c for c in QUESTIONNAIRE_COLUMNS if df_q[c].isna().all()]
     if empty_cols:
-        print(f"Празни колони (нема извор): {empty_cols}")
+        print(f"Empty columns (no source data): {len(empty_cols)} columns")
 
-    # Запишување
     try:
         with pd.ExcelWriter(args.output, engine="openpyxl") as writer:
-            df_q.to_excel(writer, index=False, sheet_name="Прашалник")
-            format_questionnaire(writer.sheets["Прашалник"], df_q)
-        # Додај легенда
-        from openpyxl import load_workbook
+            df_q.to_excel(writer, index=False, sheet_name="Questionnaire")
+            format_sheet(writer.sheets["Questionnaire"], df_q)
+
         wb = load_workbook(args.output)
         add_legend_sheet(wb)
         wb.save(args.output)
-        print(f"\nФајлот е зачуван: {args.output}")
+
+        print(f"\nSaved: {args.output}")
     except Exception as exc:
-        sys.exit(f"Грешка при запишување: {exc}")
+        sys.exit(f"Error saving file: {exc}")
 
 
 if __name__ == "__main__":
