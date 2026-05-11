@@ -2,7 +2,8 @@
 Скрипта за отстранување дупликати од Excel табела.
 
 - Ги наоѓа редовите со исто Ime + Prezime (или друга комбинација колони)
-- Го задржува редот со повеќе пополнети (не-празни) колони
+- Ги СПОЈУВА дупликатите: зема е-маил од едниот, телефон од другиот итн.
+- Резултатот е еден комплетен ред по лице со сите достапни податоци
 - Ги сортира записите по датум
 - Резултатот го зачувува во нов Excel фајл
 
@@ -33,11 +34,6 @@ import sys
 import pandas as pd
 
 
-def count_filled(row: pd.Series) -> int:
-    """Брои непразни вредности во ред."""
-    return row.notna().sum() + (row.astype(str).str.strip() != "").sum()
-
-
 def find_column(df: pd.DataFrame, candidates: list[str]) -> str | None:
     """Најди колона по листа можни имиња (case-insensitive)."""
     lower_cols = {c.lower(): c for c in df.columns}
@@ -55,10 +51,10 @@ def auto_detect_name_cols(df: pd.DataFrame) -> list[str]:
     """
     lower_cols = {c.lower(): c for c in df.columns}
 
-    ime_candidates   = ["ime", "first name", "firstname", "name", "вработен", "лице", "субјект"]
-    prez_candidates  = ["prezime", "last name", "lastname", "surname"]
-    full_candidates  = ["ime i prezime", "full name", "fullname", "полно ime",
-                        "ime prezime", "name surname"]
+    ime_candidates  = ["ime", "first name", "firstname", "name", "вработен", "лице", "субјект"]
+    prez_candidates = ["prezime", "last name", "lastname", "surname"]
+    full_candidates = ["ime i prezime", "full name", "fullname", "полно ime",
+                       "ime prezime", "name surname"]
 
     ime_col  = next((lower_cols[c] for c in ime_candidates  if c in lower_cols), None)
     prez_col = next((lower_cols[c] for c in prez_candidates if c in lower_cols), None)
@@ -73,31 +69,40 @@ def auto_detect_name_cols(df: pd.DataFrame) -> list[str]:
     return []
 
 
-def deduplicate(
+def _first_non_empty(series: pd.Series):
+    """Врати ја првата непразна вредност во серијата, или NaN ако нема."""
+    for val in series:
+        if pd.notna(val) and str(val).strip() != "":
+            return val
+    return pd.NA
+
+
+def merge_duplicates(
     df: pd.DataFrame,
     name_cols: list[str],
     date_col: str | None,
 ) -> pd.DataFrame:
     """
-    За секоја група дупликати (исто Ime + Prezime) го чува само редот со
-    најголем број пополнети колони. Потоа сортира по датум.
+    За секоја група дупликати (исто Ime + Prezime):
+      - За секоја колона зема ја ПРВАТА непразна вредност од сите дупликати
+      - Така се спојуваат сите податоци во еден комплетен ред
+    Потоа сортира по датум.
     """
-    df = df.copy()
-    df["__filled__"] = df.apply(count_filled, axis=1)
+    all_cols = list(df.columns)
+    rows = []
 
-    df_sorted = df.sort_values(
-        name_cols + ["__filled__"],
-        ascending=[True] * len(name_cols) + [False],
-    )
-    df_dedup = df_sorted.drop_duplicates(subset=name_cols, keep="first")
+    for _key, group in df.groupby(name_cols, sort=False, dropna=False):
+        merged = {col: _first_non_empty(group[col]) for col in all_cols}
+        rows.append(merged)
 
-    if date_col and date_col in df_dedup.columns:
-        df_dedup[date_col] = pd.to_datetime(df_dedup[date_col], errors="coerce")
-        df_dedup = df_dedup.sort_values(date_col, ascending=True, na_position="last")
+    df_merged = pd.DataFrame(rows, columns=all_cols)
 
-    df_dedup = df_dedup.drop(columns=["__filled__"])
-    df_dedup = df_dedup.reset_index(drop=True)
-    return df_dedup
+    if date_col and date_col in df_merged.columns:
+        df_merged[date_col] = pd.to_datetime(df_merged[date_col], errors="coerce")
+        df_merged = df_merged.sort_values(date_col, ascending=True, na_position="last")
+
+    df_merged = df_merged.reset_index(drop=True)
+    return df_merged
 
 
 def main() -> None:
@@ -168,8 +173,8 @@ def main() -> None:
     duplicates_before = df.duplicated(subset=name_cols, keep=False).sum()
     print(f"\nРедови со дупликати (пред): {duplicates_before}")
 
-    # Дедупликација
-    df_clean = deduplicate(df, name_cols, date_col)
+    # Спојување дупликати
+    df_clean = merge_duplicates(df, name_cols, date_col)
 
     removed = len(df) - len(df_clean)
     print(f"Отстранети редови: {removed}")
