@@ -1,18 +1,31 @@
 """
 Скрипта за отстранување дупликати од Excel табела.
 
-- Ги наоѓа редовите со исто ime (или друга колона)
+- Ги наоѓа редовите со исто Ime + Prezime (или друга комбинација колони)
 - Го задржува редот со повеќе пополнети (не-празни) колони
 - Ги сортира записите по датум
 - Резултатот го зачувува во нов Excel фајл
 
 Употреба:
-    python deduplicate.py --input влезен_фајл.xlsx --output излезен_фајл.xlsx
+    python3 deduplicate.py --input влезен_фајл.xlsx --output излезен_фајл.xlsx
 
 Опционални аргументи:
-    --name-col     Ime na kolonata so iminjata (default: auto-detect)
-    --date-col     Ime na kolonata so datumite (default: auto-detect)
-    --sheet        Ime na sheet-ot (default: prv sheet)
+    --name-cols    Имиња на колоните кои заедно го идентификуваат лицето
+                   (default: auto-detect, пр. "Ime" + "Prezime" или "Ime i Prezime")
+    --date-col     Колона со датуми (default: auto-detect)
+    --sheet        Ime na sheet-ot (default: прв sheet)
+
+Примери:
+    # Автоматско откривање - ги наоѓа Ime и Prezime сами
+    python3 deduplicate.py --input lista.xlsx --output rezultat.xlsx
+
+    # Рачно наведување на двете колони
+    python3 deduplicate.py --input lista.xlsx --output rezultat.xlsx \\
+        --name-cols "Ime" "Prezime"
+
+    # Само една комбинирана колона
+    python3 deduplicate.py --input lista.xlsx --output rezultat.xlsx \\
+        --name-cols "Ime i Prezime"
 """
 
 import argparse
@@ -21,12 +34,12 @@ import pandas as pd
 
 
 def count_filled(row: pd.Series) -> int:
-    """Broi neprazni vrednosti vo red."""
+    """Брои непразни вредности во ред."""
     return row.notna().sum() + (row.astype(str).str.strip() != "").sum()
 
 
 def find_column(df: pd.DataFrame, candidates: list[str]) -> str | None:
-    """Najdi kolona po lista mozni imijna (case-insensitive)."""
+    """Најди колона по листа можни имиња (case-insensitive)."""
     lower_cols = {c.lower(): c for c in df.columns}
     for name in candidates:
         if name.lower() in lower_cols:
@@ -34,26 +47,50 @@ def find_column(df: pd.DataFrame, candidates: list[str]) -> str | None:
     return None
 
 
+def auto_detect_name_cols(df: pd.DataFrame) -> list[str]:
+    """
+    Автоматски ги открива колоните со имиња.
+    Прво проверува дали постојат одделни Ime и Prezime колони.
+    Ако не, бара комбинирана колона.
+    """
+    lower_cols = {c.lower(): c for c in df.columns}
+
+    ime_candidates   = ["ime", "first name", "firstname", "name", "вработен", "лице", "субјект"]
+    prez_candidates  = ["prezime", "last name", "lastname", "surname"]
+    full_candidates  = ["ime i prezime", "full name", "fullname", "полно ime",
+                        "ime prezime", "name surname"]
+
+    ime_col  = next((lower_cols[c] for c in ime_candidates  if c in lower_cols), None)
+    prez_col = next((lower_cols[c] for c in prez_candidates if c in lower_cols), None)
+    full_col = next((lower_cols[c] for c in full_candidates if c in lower_cols), None)
+
+    if ime_col and prez_col:
+        return [ime_col, prez_col]
+    if full_col:
+        return [full_col]
+    if ime_col:
+        return [ime_col]
+    return []
+
+
 def deduplicate(
     df: pd.DataFrame,
-    name_col: str,
+    name_cols: list[str],
     date_col: str | None,
 ) -> pd.DataFrame:
     """
-    Za sekoja grupa duplikati (isto ime) go chuva samo redot so
-    najgolем broj pополнети kolonи.  Потоа sortira po datum.
+    За секоја група дупликати (исто Ime + Prezime) го чува само редот со
+    најголем број пополнети колони. Потоа сортира по датум.
     """
-    # Брои пополнети вредности за секој ред
     df = df.copy()
     df["__filled__"] = df.apply(count_filled, axis=1)
 
-    # Сортира по ime + пополнетост (опаѓачки) па го зема prviot во секоја група
     df_sorted = df.sort_values(
-        [name_col, "__filled__"], ascending=[True, False]
+        name_cols + ["__filled__"],
+        ascending=[True] * len(name_cols) + [False],
     )
-    df_dedup = df_sorted.drop_duplicates(subset=[name_col], keep="first")
+    df_dedup = df_sorted.drop_duplicates(subset=name_cols, keep="first")
 
-    # Сортира по датум ако постои
     if date_col and date_col in df_dedup.columns:
         df_dedup[date_col] = pd.to_datetime(df_dedup[date_col], errors="coerce")
         df_dedup = df_dedup.sort_values(date_col, ascending=True, na_position="last")
@@ -64,7 +101,8 @@ def deduplicate(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description=__doc__,
+                                     formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--input", required=True, help="Патека до влезниот Excel фајл")
     parser.add_argument(
         "--output",
@@ -72,9 +110,11 @@ def main() -> None:
         help="Патека до излезниот Excel фајл (default: deduplicated_<input>)",
     )
     parser.add_argument(
-        "--name-col",
+        "--name-cols",
+        nargs="+",
         default=None,
-        help="Колона со имиња (ако не е наведена, скриптата ја бара сама)",
+        metavar="КОЛОНА",
+        help='Колони кои го идентификуваат лицето, пр. --name-cols "Ime" "Prezime"',
     )
     parser.add_argument(
         "--date-col",
@@ -96,19 +136,22 @@ def main() -> None:
     print(f"Вчитани {len(df)} редови, {len(df.columns)} колони.")
     print(f"Колони: {list(df.columns)}")
 
-    # Откривање колона со имиња
-    name_col = args.name_col or find_column(
-        df,
-        ["Ime", "Ime i Prezime", "Полно Ime", "Name", "Full Name",
-         "Вработен", "Лице", "Prezime", "Субјект"],
-    )
-    if not name_col:
-        # Ако не е пронајдена, корисникот треба рачно да ја наведе
-        print("\nНе можев да ја пронајдам колоната со имиња.")
-        print("Наведи ја со --name-col \"Ime na kolonata\"")
-        print("Достапни колони:", list(df.columns))
-        sys.exit(1)
-    print(f"Колона со имиња: '{name_col}'")
+    # Откривање колони со имиња
+    if args.name_cols:
+        name_cols = args.name_cols
+        missing = [c for c in name_cols if c not in df.columns]
+        if missing:
+            sys.exit(f"Грешка: колоните {missing} не постојат во фајлот.\n"
+                     f"Достапни колони: {list(df.columns)}")
+    else:
+        name_cols = auto_detect_name_cols(df)
+        if not name_cols:
+            print("\nНе можев да ги пронајдам колоните со имиња.")
+            print('Наведи ги рачно со --name-cols "Ime" "Prezime"')
+            print("Достапни колони:", list(df.columns))
+            sys.exit(1)
+
+    print(f"Клучни колони (за дупликати): {name_cols}")
 
     # Откривање колона со датуми
     date_col = args.date_col or find_column(
@@ -122,15 +165,15 @@ def main() -> None:
         print("Колона со датуми: не е пронајдена (нема сортирање по датум).")
 
     # Бројање дупликати пред
-    duplicates_before = df.duplicated(subset=[name_col], keep=False).sum()
+    duplicates_before = df.duplicated(subset=name_cols, keep=False).sum()
     print(f"\nРедови со дупликати (пред): {duplicates_before}")
 
     # Дедупликација
-    df_clean = deduplicate(df, name_col, date_col)
+    df_clean = deduplicate(df, name_cols, date_col)
 
     removed = len(df) - len(df_clean)
     print(f"Отстранети редови: {removed}")
-    print(f"Останати редови: {len(df_clean)}")
+    print(f"Останати редови:   {len(df_clean)}")
 
     # Запишување
     output_path = args.output or f"deduplicated_{args.input}"
