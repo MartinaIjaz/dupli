@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# Generated Excel files (test artifacts)
+primer_vlezen.xlsx
+primer_izlezen.xlsx
+deduplicated_*.xlsx
